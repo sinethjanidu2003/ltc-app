@@ -68,6 +68,12 @@ class OfflineCache {
     await writeOfflineFile('snapshot.json', jsonEncode(payload));
   }
 
+  Future<void> clear() async {
+    await deleteOfflineFile('snapshot.json');
+    await deleteOfflineFile('spasticity_patterns.json');
+    await deleteOfflineFile('spasticity_patterns_neck_jaw.json');
+  }
+
   Future<OfflineSnapshot?> loadSnapshot() async {
     final rawText = await readOfflineFile('snapshot.json');
     if (rawText == null || rawText.isEmpty) return null;

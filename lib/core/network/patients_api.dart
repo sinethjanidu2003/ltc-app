@@ -69,6 +69,8 @@ class PatientsApi {
   final http.Client _http;
   final Map<String, PatientProfile> _cache = {};
 
+  void clearCache() => _cache.clear();
+
   Future<List<PatientProfile>> find(String query) async {
     final q = query.trim();
     if (q.isEmpty) return const [];

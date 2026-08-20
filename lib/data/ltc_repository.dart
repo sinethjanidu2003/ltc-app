@@ -501,30 +501,7 @@ class LtcRepository extends ChangeNotifier {
     }
 
     try {
-      final list = await _api.getList(ApiEndpoints.facilities);
-      final remote = list
-          .whereType<Map>()
-          .map((item) => LtcFacility.fromJson(Map<String, dynamic>.from(item)))
-          .toList();
-
-      // Keep richer local patient/session graphs when merging list payloads.
-      final previous = {
-        for (final facility in _facilities) facility.id: facility,
-      };
-      _facilities
-        ..clear()
-        ..addAll(
-          remote.map((facility) {
-            final prior = previous[facility.id];
-            if (prior == null) return facility;
-            return facility.copyWith(
-              patients: prior.patients,
-              sessions: prior.sessions.isNotEmpty
-                  ? prior.sessions
-                  : facility.sessions,
-            );
-          }),
-        );
+      await _pullFacilitiesFromApi(keepLocalDetails: true);
       await _persistCache();
     } catch (error) {
       final restored = await _restoreFromCache();
@@ -536,6 +513,127 @@ class LtcRepository extends ChangeNotifier {
     } finally {
       _loading = false;
       notifyListeners();
+    }
+  }
+
+  /// Discards the device cache and downloads facilities, patients, sessions,
+  /// and assessments from the server.
+  Future<bool> reloadFromDatabase() async {
+    if (!_ensurePermission(AuthResource.facilities, AuthAction.read)) {
+      return false;
+    }
+
+    if (!_connectivity.isOnline) {
+      _error = 'Connect to the internet to reload from the database.';
+      notifyListeners();
+      return false;
+    }
+
+    if (_loading || _syncing) return false;
+
+    _loading = true;
+    _error = null;
+    _syncMessage = 'Reloading from the database…';
+    notifyListeners();
+
+    try {
+      if (_queue.hasPending) {
+        await syncPending();
+        if (_queue.hasPending) {
+          _error = 'Sync unfinished changes before reloading from the database.';
+          return false;
+        }
+      }
+
+      await _cache.clear();
+      _patientsApi.clearCache();
+      _facilities.clear();
+      _musclesByFacility.clear();
+      _sessionPatientIds.clear();
+      _limbPatternCatalog = const SpasticityPatternCatalog(regions: {});
+      _neckJawPatternCatalog = SpasticityPatternCatalog.neckJawFallback;
+      _neckJawCatalogLoaded = false;
+      notifyListeners();
+
+      await _pullFacilitiesFromApi(keepLocalDetails: false);
+      await loadSpasticityPatterns(force: true);
+
+      for (final facility in List<LtcFacility>.from(facilities)) {
+        _syncMessage = 'Loading ${facility.name}…';
+        notifyListeners();
+        await _hydrateFacilityFromServer(facility.id);
+      }
+
+      await _persistCache();
+      return true;
+    } catch (error) {
+      _error = _isNetworkError(error)
+          ? 'Unable to reload from the database.'
+          : error.toString();
+      return false;
+    } finally {
+      _loading = false;
+      _syncMessage = null;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _pullFacilitiesFromApi({required bool keepLocalDetails}) async {
+    final list = await _api.getList(ApiEndpoints.facilities);
+    final remote = list
+        .whereType<Map>()
+        .map((item) => LtcFacility.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
+
+    final previous = keepLocalDetails
+        ? {for (final facility in _facilities) facility.id: facility}
+        : const <String, LtcFacility>{};
+
+    _facilities
+      ..clear()
+      ..addAll(
+        remote.map((facility) {
+          final prior = previous[facility.id];
+          if (prior == null) return facility;
+          return facility.copyWith(
+            patients: prior.patients,
+            sessions: prior.sessions.isNotEmpty
+                ? prior.sessions
+                : facility.sessions,
+          );
+        }),
+      );
+  }
+
+  Future<void> _hydrateFacilityFromServer(String facilityId) async {
+    await Future.wait([
+      loadFacilityPatients(facilityId),
+      loadFacilitySessions(facilityId),
+      loadFacilityMuscles(facilityId),
+    ]);
+
+    final facility = getById(facilityId);
+    if (facility == null) return;
+
+    for (final session in facility.sessions.where(
+      (session) => !session.id.startsWith('local-'),
+    )) {
+      await _mergeSessionAssessments(facilityId, session.id);
+      await _loadSessionRoster(facilityId, session.id);
+
+      final updated = getById(facilityId);
+      if (updated == null) continue;
+      for (final patient in updated.patients) {
+        for (final assessment in patient.assessments.where(
+          (item) => item.sessionId == session.id,
+        )) {
+          await loadNeckJawPatterns(
+            facilityId: facilityId,
+            sessionId: session.id,
+            assessmentId: assessment.id,
+          );
+        }
+      }
     }
   }
 

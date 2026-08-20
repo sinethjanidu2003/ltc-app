@@ -1,4 +1,4 @@
-enum BodyPartAffected { upperLimb, lowerLimb, neck, trunk }
+enum BodyPartAffected { upperLimb, lowerLimb, neck, jaw, trunk, unavailable }
 
 enum SideAffected { right, left, bilateral }
 
@@ -11,14 +11,18 @@ extension BodyPartAffectedLabel on BodyPartAffected {
         BodyPartAffected.upperLimb => 'Upper Limb',
         BodyPartAffected.lowerLimb => 'Lower Limb',
         BodyPartAffected.neck => 'Neck',
+        BodyPartAffected.jaw => 'Jaw',
         BodyPartAffected.trunk => 'Trunk',
+        BodyPartAffected.unavailable => 'Unavailable',
       };
 
   String get apiValue => switch (this) {
         BodyPartAffected.upperLimb => 'upper_limb',
         BodyPartAffected.lowerLimb => 'lower_limb',
         BodyPartAffected.neck => 'neck',
+        BodyPartAffected.jaw => 'jaw',
         BodyPartAffected.trunk => 'trunk',
+        BodyPartAffected.unavailable => 'unavailable',
       };
 
   static BodyPartAffected? fromApi(String? value) {
@@ -26,7 +30,9 @@ extension BodyPartAffectedLabel on BodyPartAffected {
       'upper_limb' => BodyPartAffected.upperLimb,
       'lower_limb' => BodyPartAffected.lowerLimb,
       'neck' => BodyPartAffected.neck,
+      'jaw' => BodyPartAffected.jaw,
       'trunk' => BodyPartAffected.trunk,
+      'unavailable' => BodyPartAffected.unavailable,
       _ => null,
     };
   }

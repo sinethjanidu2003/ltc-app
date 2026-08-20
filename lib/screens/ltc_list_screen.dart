@@ -23,6 +23,8 @@ class LtcListScreen extends StatefulWidget {
 }
 
 class _LtcListScreenState extends State<LtcListScreen> {
+  bool _reloading = false;
+
   @override
   void initState() {
     super.initState();
@@ -77,6 +79,61 @@ class _LtcListScreenState extends State<LtcListScreen> {
     );
   }
 
+  Future<void> _reloadFromDatabase() async {
+    if (!widget.repository.isOnline) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Connect to the internet to reload from the database.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final pending = widget.repository.pendingSyncCount;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reload from database'),
+        content: Text(
+          pending > 0
+              ? 'This will sync $pending pending change(s), then discard the local cache and download all facilities, patients, sessions, and assessments from the server.'
+              : 'This will discard the local cache and download all facilities, patients, sessions, and assessments from the database.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Reload'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _reloading = true);
+    final ok = await widget.repository.reloadFromDatabase();
+    if (!mounted) return;
+    setState(() => _reloading = false);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? 'Loaded latest data from the database.'
+              : (widget.repository.error ??
+                  'Could not reload from the database.'),
+        ),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = AccessScope.of(context);
@@ -87,7 +144,8 @@ class _LtcListScreenState extends State<LtcListScreen> {
       0,
       (sum, f) => sum + f.displayPatientCount,
     );
-    final loading = widget.repository.isLoading && facilities.isEmpty;
+    final loading =
+        _reloading || (widget.repository.isLoading && facilities.isEmpty);
 
     return AppShell(
       title: 'LTC Spasticity Assessment',
@@ -110,13 +168,20 @@ class _LtcListScreenState extends State<LtcListScreen> {
       ),
       actions: [
         IconButton(
-          onPressed: () => widget.repository.loadFacilities(),
+          onPressed: _reloading
+              ? null
+              : () => widget.repository.loadFacilities(),
           icon: const Icon(Icons.refresh),
           tooltip: 'Refresh',
         ),
+        IconButton(
+          onPressed: _reloading ? null : _reloadFromDatabase,
+          icon: const Icon(Icons.cloud_download_outlined),
+          tooltip: 'Reload from database',
+        ),
         if (canCreatePatient)
           IconButton(
-            onPressed: _showAddPatient,
+            onPressed: _reloading ? null : _showAddPatient,
             icon: const Icon(Icons.person_add_outlined),
             tooltip: 'Add patient',
           ),
@@ -177,7 +242,12 @@ class _LtcListScreenState extends State<LtcListScreen> {
             ),
           Expanded(
             child: loading
-                ? const LoadingView(message: 'Loading facilities…')
+                ? LoadingView(
+                    message: _reloading
+                        ? (widget.repository.syncMessage ??
+                            'Reloading from the database…')
+                        : 'Loading facilities…',
+                  )
                 : facilities.isEmpty
                     ? _EmptyState(
                         onAdd: canCreateFacility ? _showAddLtcDialog : null,
@@ -235,7 +305,7 @@ class _LtcListScreenState extends State<LtcListScreen> {
       ),
       floatingActionButton: canCreateFacility
           ? FloatingActionButton.extended(
-              onPressed: _showAddLtcDialog,
+              onPressed: _reloading ? null : _showAddLtcDialog,
               icon: const Icon(Icons.add),
               label: const Text('Add LTC'),
             )
