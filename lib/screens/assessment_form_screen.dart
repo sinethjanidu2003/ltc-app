@@ -152,6 +152,7 @@ class _AssessmentFormScreenState extends State<AssessmentFormScreen>
         widget.repository.loadFacilityMuscles(widget.facilityId),
         widget.repository.loadSpasticityPatterns(),
       ]);
+      await _hydrateNeckJawPatterns();
       if (!mounted) return;
       setState(() {
         _muscles = widget.repository.muscleNamesFor(widget.facilityId);
@@ -205,15 +206,81 @@ class _AssessmentFormScreenState extends State<AssessmentFormScreen>
     return Set.from(current);
   }
 
+  SpasticityAssessment? get _latestPreviousAssessment {
+    final previous = widget.previousAssessment;
+    if (previous == null) return null;
+    return widget.repository.getAssessment(
+          widget.facilityId,
+          widget.patientId,
+          previous.id,
+        ) ??
+        previous;
+  }
+
   SpasticityPatterns _patternsForFollowUp(SpasticityPatterns current) {
-    if (current.hasAny) return current;
     if (!_isFollowUp) return current;
 
     final initial = _initialAssessment();
-    if (initial != null && initial.patterns.hasAny) {
-      return initial.patterns;
+    final previous = _latestPreviousAssessment;
+
+    var next = current;
+    final source = (initial != null && initial.patterns.hasAny)
+        ? initial.patterns
+        : previous?.patterns;
+    if (!current.hasAny && source != null && source.hasAny) {
+      next = source.copyWith(neck: current.neck, jaw: current.jaw);
     }
-    return current;
+
+    final neckJawSource = (initial != null && initial.patterns.hasNeckJaw)
+        ? initial.patterns
+        : previous?.patterns;
+    if (!next.hasNeckJaw &&
+        neckJawSource != null &&
+        neckJawSource.hasNeckJaw) {
+      next = next.copyWith(
+        neck: neckJawSource.neck,
+        jaw: neckJawSource.jaw,
+      );
+    }
+    return next;
+  }
+
+  Future<void> _hydrateNeckJawPatterns() async {
+    final targets = <SpasticityAssessment>[
+      ?widget.existingAssessment,
+      ?widget.previousAssessment,
+      if (_initialAssessment() case final initial?) initial,
+    ];
+
+    final seen = <String>{};
+    await Future.wait([
+      for (final assessment in targets)
+        if (seen.add(assessment.id))
+          widget.repository.loadNeckJawPatterns(
+            facilityId: widget.facilityId,
+            sessionId: assessment.sessionId,
+            assessmentId: assessment.id,
+          ),
+    ]);
+    if (!mounted) return;
+
+    var next = _patterns;
+    final existingId = widget.existingAssessment?.id;
+    if (existingId != null) {
+      final latest = widget.repository.getAssessment(
+        widget.facilityId,
+        widget.patientId,
+        existingId,
+      );
+      if (latest != null) {
+        next = next.copyWith(
+          neck: latest.patterns.neck,
+          jaw: latest.patterns.jaw,
+        );
+      }
+    }
+
+    setState(() => _patterns = _patternsForFollowUp(next));
   }
 
   TreatmentGoals _goalsForFollowUp(TreatmentGoals current) {
@@ -334,6 +401,9 @@ class _AssessmentFormScreenState extends State<AssessmentFormScreen>
       _tabController.animateTo(0);
       return;
     }
+
+    // Commit any in-progress custom muscle name before reading rows.
+    FocusManager.instance.primaryFocus?.unfocus();
 
     final patient = widget.repository.getPatient(
       widget.facilityId,
@@ -642,7 +712,7 @@ class _AssessmentFormScreenState extends State<AssessmentFormScreen>
               ),
             if (_hasPreviousVisit) ...[
               PreviousVisitSummary(
-                assessment: widget.previousAssessment!,
+                assessment: _latestPreviousAssessment!,
                 catalog: catalog,
               ),
               const SizedBox(height: AppSpacing.sectionGap),
@@ -730,10 +800,12 @@ class _AssessmentFormScreenState extends State<AssessmentFormScreen>
               icon: Icons.category_outlined,
               child: canEditOverview
                   ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         _FormTile(
                           label: 'Body Parts Affected',
                           child: Wrap(
+                            alignment: WrapAlignment.start,
                             spacing: 8,
                             runSpacing: 8,
                             children: BodyPartAffected.values.map((part) {
@@ -864,15 +936,9 @@ class _AssessmentFormScreenState extends State<AssessmentFormScreen>
 
     for (final entry in regions) {
       if (entry.value.isEmpty) continue;
-      final label = catalog.isEmpty
-          ? entry.key
-          : catalog.regionLabel(entry.key);
+      final label = catalog.regionLabel(entry.key);
       final values = entry.value
-          .map(
-            (key) => catalog.isEmpty
-                ? key.replaceAll('_', ' ')
-                : catalog.optionLabel(entry.key, key),
-          )
+          .map((key) => catalog.optionLabel(entry.key, key))
           .join(', ');
       rows.add(
         Padding(
@@ -898,7 +964,10 @@ class _AssessmentFormScreenState extends State<AssessmentFormScreen>
       );
     }
 
-    return Column(children: rows);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: rows,
+    );
   }
 
   Widget _buildSpasticityPatternEditor({bool editable = true}) {
@@ -911,6 +980,7 @@ class _AssessmentFormScreenState extends State<AssessmentFormScreen>
     }
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: catalog.orderedRegions.map((entry) {
         final regionKey = entry.key;
         final options = entry.value;
@@ -921,12 +991,13 @@ class _AssessmentFormScreenState extends State<AssessmentFormScreen>
           child: _FormTile(
             label: catalog.regionLabel(regionKey),
             child: Wrap(
+              alignment: WrapAlignment.start,
               spacing: 8,
               runSpacing: 8,
               children: options.map((option) {
                 final isSelected = selected.contains(option.key);
                 return FilterChip(
-                  label: Text(option.label),
+                  label: Text(catalog.optionLabel(regionKey, option.key)),
                   selected: isSelected,
                   onSelected: !editable || _isPersistentlyLocked
                       ? null
@@ -952,7 +1023,6 @@ class _AssessmentFormScreenState extends State<AssessmentFormScreen>
                     color: isSelected
                         ? AppColors.primary
                         : AppColors.textPrimary,
-                    fontSize: 13,
                   ),
                   side: BorderSide(
                     color: isSelected ? AppColors.primary : AppColors.border,
@@ -976,7 +1046,7 @@ class _AssessmentFormScreenState extends State<AssessmentFormScreen>
       children: [
         if (_hasPreviousVisit) ...[
           PreviousVisitSummary(
-            assessment: widget.previousAssessment!,
+            assessment: _latestPreviousAssessment!,
             catalog: catalog,
             title: 'Previous visit',
             initiallyExpanded: false,
@@ -1060,14 +1130,14 @@ class _AssessmentFormScreenState extends State<AssessmentFormScreen>
                           setState(() => _goals = _goals.copyWith(poorSleep: v)),
                     ),
                     _GoalChip(
-                      'Reduced Mobility',
+                      'Increase Mobility',
                       _goals.reducedMobility,
                       (v) => setState(
                         () => _goals = _goals.copyWith(reducedMobility: v),
                       ),
                     ),
                     _GoalChip(
-                      'Reduced Hygiene',
+                      'Increase Hygiene',
                       _goals.reducedHygiene,
                       (v) => setState(
                         () => _goals = _goals.copyWith(reducedHygiene: v),

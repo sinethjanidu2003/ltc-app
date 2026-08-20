@@ -40,8 +40,19 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      widget.repository.loadSpasticityPatterns();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await widget.repository.loadSpasticityPatterns();
+      final assessment = widget.repository.getAssessment(
+        widget.facilityId,
+        widget.patientId,
+        widget.assessmentId,
+      );
+      if (assessment == null) return;
+      await widget.repository.loadNeckJawPatterns(
+        facilityId: widget.facilityId,
+        sessionId: assessment.sessionId,
+        assessmentId: assessment.id,
+      );
     });
   }
 
@@ -586,15 +597,9 @@ class _PatternsSection extends StatelessWidget {
 
     void addRegion(String regionKey, List<String> keys) {
       if (keys.isEmpty) return;
-      final label = catalog.isEmpty
-          ? (regionKey.isEmpty
-              ? regionKey
-              : regionKey[0].toUpperCase() + regionKey.substring(1))
-          : catalog.regionLabel(regionKey);
+      final label = catalog.regionLabel(regionKey);
       final values = keys
-          .map((key) => catalog.isEmpty
-              ? key.replaceAll('_', ' ')
-              : catalog.optionLabel(regionKey, key))
+          .map((key) => catalog.optionLabel(regionKey, key))
           .join(', ');
       entries.add(MapEntry(label, values));
     }

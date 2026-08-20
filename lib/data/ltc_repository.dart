@@ -48,8 +48,11 @@ class LtcRepository extends ChangeNotifier {
   final List<LtcFacility> _facilities = [];
   final Map<String, List<Muscle>> _musclesByFacility = {};
   final Map<String, Set<String>> _sessionPatientIds = {};
-  SpasticityPatternCatalog _patternCatalog =
+  SpasticityPatternCatalog _limbPatternCatalog =
       const SpasticityPatternCatalog(regions: {});
+  SpasticityPatternCatalog _neckJawPatternCatalog =
+      SpasticityPatternCatalog.neckJawFallback;
+  bool _neckJawCatalogLoaded = false;
   bool _loading = false;
   bool _syncing = false;
   bool _ready = false;
@@ -119,19 +122,27 @@ class LtcRepository extends ChangeNotifier {
     return {for (final muscle in muscles) muscle.name: muscle.id};
   }
 
-  SpasticityPatternCatalog get patternCatalog => _patternCatalog;
+  SpasticityPatternCatalog get patternCatalog =>
+      _limbPatternCatalog.mergedWith(_neckJawPatternCatalog);
 
   Future<void> loadSpasticityPatterns({bool force = false}) async {
-    if (!force && !_patternCatalog.isEmpty) return;
-
     if (!_ensurePermission(AuthResource.assessments, AuthAction.read)) {
       return;
     }
 
+    await Future.wait([
+      _loadLimbPatternCatalog(force: force),
+      _loadNeckJawPatternCatalog(force: force),
+    ]);
+  }
+
+  Future<void> _loadLimbPatternCatalog({required bool force}) async {
+    if (!force && _limbPatternCatalog.hasLimbRegions) return;
+
     if (!_connectivity.isOnline) {
       final cached = await _cache.loadPatternCatalog();
       if (cached != null && !cached.isEmpty) {
-        _patternCatalog = cached;
+        _limbPatternCatalog = cached;
         notifyListeners();
       }
       return;
@@ -141,20 +152,145 @@ class LtcRepository extends ChangeNotifier {
       final json = await _api.get(ApiEndpoints.spasticityPatterns);
       final catalog = SpasticityPatternCatalog.fromJson(json);
       if (!catalog.isEmpty) {
-        _patternCatalog = catalog;
+        _limbPatternCatalog = catalog;
         await _cache.savePatternCatalog(catalog);
         notifyListeners();
       }
     } on ApiException catch (error) {
       final cached = await _cache.loadPatternCatalog();
       if (cached != null && !cached.isEmpty) {
-        _patternCatalog = cached;
+        _limbPatternCatalog = cached;
         notifyListeners();
       } else {
         _error = error.message;
         notifyListeners();
       }
     }
+  }
+
+  Future<void> _loadNeckJawPatternCatalog({required bool force}) async {
+    if (!force && _neckJawCatalogLoaded) return;
+
+    if (!_connectivity.isOnline) {
+      final cached = await _cache.loadNeckJawPatternCatalog();
+      if (cached != null && !cached.isEmpty) {
+        _neckJawPatternCatalog = cached;
+        notifyListeners();
+      }
+      return;
+    }
+
+    try {
+      final json = await _api.get(ApiEndpoints.spasticityPatternsNeckJaw);
+      final catalog = SpasticityPatternCatalog.fromJson(json);
+      if (!catalog.isEmpty) {
+        _neckJawPatternCatalog = catalog;
+        await _cache.saveNeckJawPatternCatalog(catalog);
+      }
+      _neckJawCatalogLoaded = true;
+      notifyListeners();
+    } on ApiException {
+      final cached = await _cache.loadNeckJawPatternCatalog();
+      if (cached != null && !cached.isEmpty) {
+        _neckJawPatternCatalog = cached;
+      }
+      _neckJawCatalogLoaded = true;
+      notifyListeners();
+    }
+  }
+
+  bool _isPersistedAssessmentId(String id) =>
+      id.isNotEmpty && !id.startsWith('local-') && !id.startsWith('a-');
+
+  Future<void> loadNeckJawPatterns({
+    required String facilityId,
+    required String sessionId,
+    required String assessmentId,
+  }) async {
+    if (!_isPersistedAssessmentId(assessmentId)) return;
+    if (!_ensurePermission(
+      AuthResource.assessments,
+      AuthAction.read,
+      facilityId: facilityId,
+    )) {
+      return;
+    }
+
+    if (!_connectivity.isOnline) return;
+
+    try {
+      final json = await _api.get(
+        ApiEndpoints.sessionAssessmentNeckJawPatterns(
+          facilityId,
+          sessionId,
+          assessmentId,
+        ),
+      );
+      final neckJaw = SpasticityPatterns.fromJson(json);
+      _mergeNeckJawIntoAssessment(
+        facilityId: facilityId,
+        assessmentId: assessmentId,
+        neck: neckJaw.neck,
+        jaw: neckJaw.jaw,
+      );
+      notifyListeners();
+    } on ApiException {
+      // Limb assessment still loads; neck/jaw stay at cached values.
+    }
+  }
+
+  Future<void> _saveNeckJawPatterns({
+    required String facilityId,
+    required String sessionId,
+    required String assessmentId,
+    required SpasticityPatterns patterns,
+  }) async {
+    if (!_isPersistedAssessmentId(assessmentId) || !_connectivity.isOnline) {
+      return;
+    }
+
+    final json = await _api.put(
+      ApiEndpoints.sessionAssessmentNeckJawPatterns(
+        facilityId,
+        sessionId,
+        assessmentId,
+      ),
+      body: patterns.toNeckJawApiJson(),
+    );
+    final saved = SpasticityPatterns.fromJson(json);
+    _mergeNeckJawIntoAssessment(
+      facilityId: facilityId,
+      assessmentId: assessmentId,
+      neck: saved.neck,
+      jaw: saved.jaw,
+    );
+  }
+
+  void _mergeNeckJawIntoAssessment({
+    required String facilityId,
+    required String assessmentId,
+    required List<String> neck,
+    required List<String> jaw,
+  }) {
+    final facilityIndex = _facilities.indexWhere((f) => f.id == facilityId);
+    if (facilityIndex == -1) return;
+    final facility = _facilities[facilityIndex];
+
+    var changed = false;
+    final patients = facility.patients.map((patient) {
+      final index = patient.assessments.indexWhere((a) => a.id == assessmentId);
+      if (index == -1) return patient;
+      changed = true;
+      final assessments = List<SpasticityAssessment>.from(patient.assessments);
+      final current = assessments[index];
+      assessments[index] = current.copyWith(
+        patterns: current.patterns.copyWith(neck: neck, jaw: jaw),
+      );
+      return patient.copyWith(assessments: assessments);
+    }).toList();
+
+    if (!changed) return;
+    _facilities[facilityIndex] = facility.copyWith(patients: patients);
   }
 
   String _sessionKey(String facilityId, String sessionId) =>
@@ -188,7 +324,11 @@ class LtcRepository extends ChangeNotifier {
     await _restoreFromCache();
     final cachedPatterns = await _cache.loadPatternCatalog();
     if (cachedPatterns != null && !cachedPatterns.isEmpty) {
-      _patternCatalog = cachedPatterns;
+      _limbPatternCatalog = cachedPatterns;
+    }
+    final cachedNeckJaw = await _cache.loadNeckJawPatternCatalog();
+    if (cachedNeckJaw != null && !cachedNeckJaw.isEmpty) {
+      _neckJawPatternCatalog = cachedNeckJaw;
     }
     _ready = true;
     notifyListeners();
@@ -921,11 +1061,20 @@ class LtcRepository extends ChangeNotifier {
         }
 
         final patient = patients[patientIndex];
+        final existing = patient.assessments.where((a) => a.id == assessment.id);
+        final resolved = existing.isEmpty
+            ? assessment
+            : assessment.copyWith(
+                patterns: assessment.patterns.copyWith(
+                  neck: existing.first.patterns.neck,
+                  jaw: existing.first.patterns.jaw,
+                ),
+              );
         final withoutThis = patient.assessments
             .where((a) => a.id != assessment.id)
             .toList();
         patients[patientIndex] = patient.copyWith(
-          assessments: [...withoutThis, assessment],
+          assessments: [...withoutThis, resolved],
         );
       }
 
@@ -1157,19 +1306,37 @@ class LtcRepository extends ChangeNotifier {
         json,
         fallbackSessionId: assessment.sessionId,
       );
+      final withNeckJaw = saved.copyWith(
+        patterns: saved.patterns.copyWith(
+          neck: assessment.patterns.neck,
+          jaw: assessment.patterns.jaw,
+        ),
+      );
 
       _upsertPatientAssessment(
         facilityId: facilityId,
         patientId: patientId,
-        assessment: saved,
+        assessment: withNeckJaw,
       );
 
       final key = _sessionKey(facilityId, assessment.sessionId);
       _sessionPatientIds.putIfAbsent(key, () => <String>{}).add(patientId);
 
+      try {
+        await _saveNeckJawPatterns(
+          facilityId: facilityId,
+          sessionId: withNeckJaw.sessionId,
+          assessmentId: withNeckJaw.id,
+          patterns: withNeckJaw.patterns,
+        );
+      } on ApiException catch (error) {
+        _error = error.message;
+      }
+
       await _persistCache();
       notifyListeners();
-      return saved;
+      return getAssessment(facilityId, patientId, withNeckJaw.id) ??
+          withNeckJaw;
     } on ApiException catch (error) {
       _error = error.message;
       notifyListeners();
@@ -1276,10 +1443,16 @@ class LtcRepository extends ChangeNotifier {
           json,
           fallbackSessionId: assessment.sessionId,
         );
+        final withNeckJaw = saved.copyWith(
+          patterns: saved.patterns.copyWith(
+            neck: assessment.patterns.neck,
+            jaw: assessment.patterns.jaw,
+          ),
+        );
         _upsertPatientAssessment(
           facilityId: facilityId,
           patientId: patientId,
-          assessment: saved.copyWith(),
+          assessment: withNeckJaw,
         );
         // Drop the local temp assessment if ids differ.
         if (assessment.id != saved.id) {
@@ -1287,8 +1460,18 @@ class LtcRepository extends ChangeNotifier {
             facilityId: facilityId,
             patientId: patientId,
             oldId: assessment.id,
-            assessment: saved,
+            assessment: withNeckJaw,
           );
+        }
+        try {
+          await _saveNeckJawPatterns(
+            facilityId: facilityId,
+            sessionId: withNeckJaw.sessionId,
+            assessmentId: withNeckJaw.id,
+            patterns: withNeckJaw.patterns,
+          );
+        } on ApiException {
+          // Assessment is already persisted; avoid re-POSTing on retry.
         }
     }
   }

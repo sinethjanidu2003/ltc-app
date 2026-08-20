@@ -155,17 +155,9 @@ class PreviousVisitSummary extends StatelessWidget {
 
     for (final entry in regions) {
       if (entry.value.isEmpty) continue;
-      final label = catalog.isEmpty
-          ? (entry.key.isEmpty
-              ? entry.key
-              : entry.key[0].toUpperCase() + entry.key.substring(1))
-          : catalog.regionLabel(entry.key);
+      final label = catalog.regionLabel(entry.key);
       final values = entry.value
-          .map(
-            (key) => catalog.isEmpty
-                ? key.replaceAll('_', ' ')
-                : catalog.optionLabel(entry.key, key),
-          )
+          .map((key) => catalog.optionLabel(entry.key, key))
           .join(', ');
       rows.add(_kv(label, values));
     }

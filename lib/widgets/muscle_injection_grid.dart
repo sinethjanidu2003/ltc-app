@@ -497,7 +497,9 @@ class _MuscleInjectionGridState extends State<MuscleInjectionGrid> {
                           initialValue: row.customLabel ?? '',
                           fontSize: _fontSize,
                           bold: row.selected,
-                          onChanged: (value) {
+                          // Commit only on focus lost — parent setState on every
+                          // keystroke rebuilds the form and dismisses the keyboard.
+                          onCommitted: (value) {
                             _updateRow(
                               muscle,
                               row.copyWith(
@@ -941,13 +943,13 @@ class _CustomMuscleNameField extends StatefulWidget {
     required this.initialValue,
     required this.fontSize,
     required this.bold,
-    required this.onChanged,
+    required this.onCommitted,
   });
 
   final String initialValue;
   final double fontSize;
   final bool bold;
-  final ValueChanged<String> onChanged;
+  final ValueChanged<String> onCommitted;
 
   @override
   State<_CustomMuscleNameField> createState() => _CustomMuscleNameFieldState();
@@ -955,15 +957,45 @@ class _CustomMuscleNameField extends StatefulWidget {
 
 class _CustomMuscleNameFieldState extends State<_CustomMuscleNameField> {
   late final TextEditingController _controller;
+  late final FocusNode _focusNode;
+  late String _lastCommitted;
 
   @override
   void initState() {
     super.initState();
+    _lastCommitted = widget.initialValue;
     _controller = TextEditingController(text: widget.initialValue);
+    _focusNode = FocusNode();
+    _focusNode.addListener(_handleFocusChange);
+  }
+
+  @override
+  void didUpdateWidget(covariant _CustomMuscleNameField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Only adopt parent text when not editing (e.g. copy-from-previous).
+    if (!_focusNode.hasFocus && widget.initialValue != _controller.text) {
+      _controller.text = widget.initialValue;
+      _lastCommitted = widget.initialValue;
+    }
+  }
+
+  void _handleFocusChange() {
+    if (!_focusNode.hasFocus) {
+      _commit();
+    }
+  }
+
+  void _commit() {
+    final value = _controller.text;
+    if (value == _lastCommitted) return;
+    _lastCommitted = value;
+    widget.onCommitted(value);
   }
 
   @override
   void dispose() {
+    _focusNode.removeListener(_handleFocusChange);
+    _focusNode.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -972,6 +1004,7 @@ class _CustomMuscleNameFieldState extends State<_CustomMuscleNameField> {
   Widget build(BuildContext context) {
     return TextField(
       controller: _controller,
+      focusNode: _focusNode,
       style: TextStyle(
         fontSize: widget.fontSize,
         fontWeight: widget.bold ? FontWeight.w600 : FontWeight.w500,
@@ -982,7 +1015,9 @@ class _CustomMuscleNameFieldState extends State<_CustomMuscleNameField> {
         border: InputBorder.none,
         contentPadding: EdgeInsets.symmetric(vertical: 8),
       ),
-      onChanged: widget.onChanged,
+      textInputAction: TextInputAction.done,
+      onEditingComplete: _commit,
+      onSubmitted: (_) => _commit(),
     );
   }
 }

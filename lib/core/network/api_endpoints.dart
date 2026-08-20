@@ -5,6 +5,7 @@ abstract final class ApiEndpoints {
   static const user = '/api/user';
   static const users = '/api/users';
   static const spasticityPatterns = '/api/spasticity-patterns';
+  static const spasticityPatternsNeckJaw = '/api/spasticity-patterns/neck-jaw';
 
   static String userById(String id) => '$users/$id';
 
@@ -46,4 +47,11 @@ abstract final class ApiEndpoints {
     String assessmentId,
   ) =>
       '${sessionAssessments(facilityId, sessionId)}/$assessmentId';
+
+  static String sessionAssessmentNeckJawPatterns(
+    String facilityId,
+    String sessionId,
+    String assessmentId,
+  ) =>
+      '${sessionAssessment(facilityId, sessionId, assessmentId)}/neck-jaw-patterns';
 }

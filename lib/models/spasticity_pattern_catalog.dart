@@ -14,7 +14,7 @@ class SpasticityPatternOption {
     return SpasticityPatternOption(
       key: key,
       label: (label != null && label.isNotEmpty)
-          ? label
+          ? _titleCase(label)
           : _labelFromKey(key),
     );
   }
@@ -37,6 +37,9 @@ class SpasticityPatternCatalog {
     'hip',
     'knee',
     'ankle',
+    'trunk',
+    'neck',
+    'jaw',
   ];
 
   List<MapEntry<String, List<SpasticityPatternOption>>> get orderedRegions {
@@ -58,15 +61,14 @@ class SpasticityPatternCatalog {
   }
 
   String regionLabel(String regionKey) {
-    if (regionKey.isEmpty) return regionKey;
-    return regionKey[0].toUpperCase() + regionKey.substring(1);
+    return _titleCase(regionKey.replaceAll('_', ' '));
   }
 
   String optionLabel(String regionKey, String optionKey) {
     final options = regions[regionKey];
     if (options != null) {
       for (final option in options) {
-        if (option.key == optionKey) return option.label;
+        if (option.key == optionKey) return _titleCase(option.label);
       }
     }
     return _labelFromKey(optionKey);
@@ -106,8 +108,62 @@ class SpasticityPatternCatalog {
       };
 
   bool get isEmpty => regions.isEmpty;
+
+  bool get hasNeckJaw =>
+      (regions['neck']?.isNotEmpty ?? false) ||
+      (regions['jaw']?.isNotEmpty ?? false);
+
+  bool get hasLimbRegions => regions.entries.any(
+        (entry) =>
+            entry.key != 'neck' && entry.key != 'jaw' && entry.value.isNotEmpty,
+      );
+
+  SpasticityPatternCatalog mergedWith(SpasticityPatternCatalog other) {
+    if (other.isEmpty) return this;
+    if (isEmpty) return other;
+    return SpasticityPatternCatalog(
+      regions: {
+        ...regions,
+        ...other.regions,
+      },
+    );
+  }
+
+  /// Built-in Neck / Jaw options from `GET /api/spasticity-patterns/neck-jaw`.
+  static const neckJawFallback = SpasticityPatternCatalog(
+    regions: {
+      'neck': [
+        SpasticityPatternOption(key: 'normal', label: 'Normal'),
+        SpasticityPatternOption(
+          key: 'increased_flexion_tone',
+          label: 'Increased Flexion Tone',
+        ),
+        SpasticityPatternOption(key: 'torticollis', label: 'Torticollis'),
+        SpasticityPatternOption(key: 'extension_tone', label: 'Extension Tone'),
+        SpasticityPatternOption(key: 'laterocollis', label: 'Laterocollis'),
+      ],
+      'jaw': [
+        SpasticityPatternOption(
+          key: 'no_increased_jaw_clenching',
+          label: 'No Increased Jaw Clenching',
+        ),
+        SpasticityPatternOption(
+          key: 'increased_jaw_clenching',
+          label: 'Increased Jaw Clenching',
+        ),
+      ],
+    },
+  );
 }
 
 String _labelFromKey(String key) {
-  return key.replaceAll('_', ' ').trim();
+  return _titleCase(key.replaceAll('_', ' '));
+}
+
+String _titleCase(String text) {
+  final words = text.trim().split(RegExp(r'\s+'));
+  return words
+      .where((word) => word.isNotEmpty)
+      .map((word) => word[0].toUpperCase() + word.substring(1))
+      .join(' ');
 }

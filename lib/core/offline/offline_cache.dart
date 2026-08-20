@@ -21,7 +21,22 @@ class OfflineCache {
   }
 
   Future<SpasticityPatternCatalog?> loadPatternCatalog() async {
-    final rawText = await readOfflineFile('spasticity_patterns.json');
+    return _loadCatalogFile('spasticity_patterns.json');
+  }
+
+  Future<void> saveNeckJawPatternCatalog(SpasticityPatternCatalog catalog) async {
+    await writeOfflineFile(
+      'spasticity_patterns_neck_jaw.json',
+      jsonEncode(catalog.toJson()),
+    );
+  }
+
+  Future<SpasticityPatternCatalog?> loadNeckJawPatternCatalog() async {
+    return _loadCatalogFile('spasticity_patterns_neck_jaw.json');
+  }
+
+  Future<SpasticityPatternCatalog?> _loadCatalogFile(String filename) async {
+    final rawText = await readOfflineFile(filename);
     if (rawText == null || rawText.isEmpty) return null;
     try {
       final raw = jsonDecode(rawText);

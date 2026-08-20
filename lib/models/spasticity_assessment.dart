@@ -76,6 +76,8 @@ class SpasticityPatterns {
     this.knee = const [],
     this.ankle = const [],
     this.trunk = const [],
+    this.neck = const [],
+    this.jaw = const [],
   });
 
   final List<String> shoulder;
@@ -87,6 +89,8 @@ class SpasticityPatterns {
   final List<String> knee;
   final List<String> ankle;
   final List<String> trunk;
+  final List<String> neck;
+  final List<String> jaw;
 
   /// Region field name without `pattern_` prefix → selected keys.
   Map<String, List<String>> get byRegion => {
@@ -99,7 +103,11 @@ class SpasticityPatterns {
         'knee': knee,
         'ankle': ankle,
         if (trunk.isNotEmpty) 'trunk': trunk,
+        'neck': neck,
+        'jaw': jaw,
       };
+
+  bool get hasNeckJaw => neck.isNotEmpty || jaw.isNotEmpty;
 
   bool get hasAny => byRegion.values.any((keys) => keys.isNotEmpty);
 
@@ -123,6 +131,10 @@ class SpasticityPatterns {
         return ankle;
       case 'trunk':
         return trunk;
+      case 'neck':
+        return neck;
+      case 'jaw':
+        return jaw;
       default:
         return const [];
     }
@@ -139,9 +151,12 @@ class SpasticityPatterns {
       knee: _stringList(json['pattern_knee']),
       ankle: _stringList(json['pattern_ankle']),
       trunk: _stringList(json['pattern_trunk']),
+      neck: _stringList(json['pattern_neck']),
+      jaw: _stringList(json['pattern_jaw']),
     );
   }
 
+  /// Limb fields for assessment POST / PUT. Neck and jaw use a separate API.
   Map<String, dynamic> toApiJson() => {
         'pattern_shoulder': shoulder,
         'pattern_elbow': elbow,
@@ -154,6 +169,16 @@ class SpasticityPatterns {
         'pattern_trunk': trunk,
       };
 
+  Map<String, dynamic> toNeckJawApiJson() => {
+        'pattern_neck': neck,
+        'pattern_jaw': jaw,
+      };
+
+  Map<String, dynamic> toCacheJson() => {
+        ...toApiJson(),
+        ...toNeckJawApiJson(),
+      };
+
   SpasticityPatterns copyWith({
     List<String>? shoulder,
     List<String>? elbow,
@@ -164,6 +189,8 @@ class SpasticityPatterns {
     List<String>? knee,
     List<String>? ankle,
     List<String>? trunk,
+    List<String>? neck,
+    List<String>? jaw,
   }) {
     return SpasticityPatterns(
       shoulder: shoulder ?? this.shoulder,
@@ -175,6 +202,8 @@ class SpasticityPatterns {
       knee: knee ?? this.knee,
       ankle: ankle ?? this.ankle,
       trunk: trunk ?? this.trunk,
+      neck: neck ?? this.neck,
+      jaw: jaw ?? this.jaw,
     );
   }
 
@@ -198,6 +227,10 @@ class SpasticityPatterns {
         return copyWith(ankle: List<String>.from(keys));
       case 'trunk':
         return copyWith(trunk: List<String>.from(keys));
+      case 'neck':
+        return copyWith(neck: List<String>.from(keys));
+      case 'jaw':
+        return copyWith(jaw: List<String>.from(keys));
       default:
         return this;
     }
@@ -274,8 +307,8 @@ class TreatmentGoals {
     if (deformity) goals.add('Deformity');
     if (pressureSore) goals.add('Pressure Sore');
     if (poorSleep) goals.add('Poor Sleep');
-    if (reducedMobility) goals.add('Reduced Mobility');
-    if (reducedHygiene) goals.add('Reduced Hygiene');
+    if (reducedMobility) goals.add('Increase Mobility');
+    if (reducedHygiene) goals.add('Increase Hygiene');
     if (carerBurden) goals.add('Carer Burden');
     if (customGoal1 != null && customGoal1!.isNotEmpty) goals.add(customGoal1!);
     if (customGoal2 != null && customGoal2!.isNotEmpty) goals.add(customGoal2!);
@@ -449,7 +482,7 @@ class SpasticityAssessment {
       'outcome': outcome?.apiValue,
       'notes': notes,
       'initials': initials,
-      ...patterns.toApiJson(),
+      ...patterns.toCacheJson(),
       'goal_spasm': goals.spasm,
       'goal_pain': goals.pain,
       'goal_positioning': goals.positioning,
